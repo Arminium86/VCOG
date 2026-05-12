@@ -9,7 +9,7 @@ from libblocksmith import TableModel  # type: ignore
 import pandas as pd
 
 REQUIRED_COLUMNS = [
-    "fe_bin", "ore", "i_fe", "i_t",
+    "fe_bin", "ore", "i_fe", "i_t", "si_bin", "al_bin",
 ]
 STEP_SIZE = 0.25
 FE_BIN_THRESHOLD = float(globals().get("fe_bin_threshold", 50))
@@ -79,12 +79,33 @@ for period_number, input_model in enumerate(input_models[:8], start=1):
         i_t = pd.to_numeric(pd.Series([cutoff_row["i_t"]]), errors="coerce").iloc[0]
         bin_grade = float(i_fe / i_t) if pd.notna(i_fe) and pd.notna(i_t) and i_t != 0 else float("nan")
 
-    results.append({"Period": period_name, "Fe Cut-off (Bin)": cutoff, "Bin Grade": bin_grade})
+    results.append({"Period": period_name, "Fe Cut-off (Bin)": cutoff, "Bin Average Fe Grade": bin_grade})
 
 output_table = pd.DataFrame(results)
 cutoff_series = pd.to_numeric(output_table["Fe Cut-off (Bin)"], errors="coerce")
-output_table["Always Ore"] = cutoff_series.max(skipna=True)
-output_table["Always Waste"] = cutoff_series.min(skipna=True)
+always_ore_threshold = cutoff_series.max(skipna=True)
+output_table["Always Ore Fe Threshold"] = always_ore_threshold
+output_table["Always Waste Fe Threshold"] = cutoff_series.min(skipna=True)
+
+# Determine max Si/Al bins across all periods for bins above always ore threshold.
+all_periods = []
+for input_model in input_models[:8]:
+    df = input_model.read().to_pandas()
+    _validate_columns(df, str(input_model.label))
+    all_periods.append(df)
+
+all_periods_df = pd.concat(all_periods, ignore_index=True) if all_periods else pd.DataFrame(columns=REQUIRED_COLUMNS)
+all_periods_df["fe_bin_num"] = pd.to_numeric(all_periods_df["fe_bin"], errors="coerce")
+all_periods_df["si_bin_num"] = pd.to_numeric(all_periods_df["si_bin"], errors="coerce")
+all_periods_df["al_bin_num"] = pd.to_numeric(all_periods_df["al_bin"], errors="coerce")
+
+if pd.notna(always_ore_threshold):
+    ao_filtered = all_periods_df.loc[all_periods_df["fe_bin_num"] > always_ore_threshold]
+else:
+    ao_filtered = all_periods_df.iloc[0:0]
+
+output_table["Always Ore Max Si"] = pd.to_numeric(ao_filtered["si_bin_num"], errors="coerce").max(skipna=True)
+output_table["Always Ore Max Al"] = pd.to_numeric(ao_filtered["al_bin_num"], errors="coerce").max(skipna=True)
 output_model = handle.create_model("Table", "fe_cutoff_by_period")
 TableModel.from_pandas(output_table).write(output_model.model_path)
 output_set.append_model("Output Models", output_model)
