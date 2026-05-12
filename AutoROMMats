@@ -363,4 +363,26 @@ output_rommats_definition = handle.create_model("Table", "rommats_definition")
 TableModel.from_pandas(rommats_definition_df).write(output_rommats_definition.model_path)
 output_set.append_model("Output Models", output_rommats_definition)
 
+
+rommats_definition_aggregated_df = (
+    df_block[df_block["i_rom_mats_vcog"].notna()]
+    .assign(value=lambda d: d["i_rom_mats_vcog"].astype(str).str.lower())
+    .groupby("value", as_index=False)
+    .agg(
+        i_fe_min=("i_fe", "min"),
+        i_fe_max=("i_fe", "max"),
+        i_al_min=("i_al", "min"),
+        i_al_max=("i_al", "max"),
+        i_si_min=("i_si", "min"),
+        i_si_max=("i_si", "max"),
+        n_blocks=("i_t", "size"),
+        tonnes=("i_t", "sum"),
+    )
+    .sort_values(by=["i_fe_min", "value"], ascending=[False, True])
+    .reset_index(drop=True)
+)
+output_rommats_definition_aggregated = handle.create_model("Table", "rommats_definition_aggregated")
+TableModel.from_pandas(rommats_definition_aggregated_df).write(output_rommats_definition_aggregated.model_path)
+output_set.append_model("Output Models", output_rommats_definition_aggregated)
+
 handle.log_info("Completed Always Ore binning, ROM mat classification, and swing quantile assignment.")
