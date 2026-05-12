@@ -61,6 +61,93 @@ def make_bin_floor(series: pd.Series, step: float) -> pd.Series:
     return np.floor(x / step) * step
 
 
+
+
+def compress_rommats_ranges(df_cells: pd.DataFrame, step: float) -> pd.DataFrame:
+    # Stage 1: merge contiguous SI bins per (value, fe_bin, al_bin)
+    si_ranges = []
+    for (value, fe_bin, al_bin), grp in df_cells.groupby(["value", "fe_bin", "al_bin"], sort=False):
+        g = grp.sort_values("si_bin")
+        start = None
+        prev = None
+        blocks = 0
+        tonnes = 0.0
+        for _, r in g.iterrows():
+            si = float(r["si_bin"])
+            if start is None:
+                start = prev = si
+                blocks = int(r["n_blocks"])
+                tonnes = float(r["tonnes"])
+            elif abs(si - prev - step) < 1e-12:
+                prev = si
+                blocks += int(r["n_blocks"])
+                tonnes += float(r["tonnes"])
+            else:
+                si_ranges.append({"value": value, "fe_bin": fe_bin, "al_bin": al_bin, "si_min": start, "si_max": prev + step, "n_blocks": blocks, "tonnes": tonnes})
+                start = prev = si
+                blocks = int(r["n_blocks"])
+                tonnes = float(r["tonnes"])
+        if start is not None:
+            si_ranges.append({"value": value, "fe_bin": fe_bin, "al_bin": al_bin, "si_min": start, "si_max": prev + step, "n_blocks": blocks, "tonnes": tonnes})
+
+    df_si = pd.DataFrame(si_ranges)
+
+    # Stage 2: merge contiguous AL bins with identical SI interval
+    al_ranges = []
+    for (value, fe_bin, si_min, si_max), grp in df_si.groupby(["value", "fe_bin", "si_min", "si_max"], sort=False):
+        g = grp.sort_values("al_bin")
+        start = None
+        prev = None
+        blocks = 0
+        tonnes = 0.0
+        for _, r in g.iterrows():
+            al = float(r["al_bin"])
+            if start is None:
+                start = prev = al
+                blocks = int(r["n_blocks"])
+                tonnes = float(r["tonnes"])
+            elif abs(al - prev - step) < 1e-12:
+                prev = al
+                blocks += int(r["n_blocks"])
+                tonnes += float(r["tonnes"])
+            else:
+                al_ranges.append({"value": value, "fe_bin": fe_bin, "al_min": start, "al_max": prev + step, "si_min": si_min, "si_max": si_max, "n_blocks": blocks, "tonnes": tonnes})
+                start = prev = al
+                blocks = int(r["n_blocks"])
+                tonnes = float(r["tonnes"])
+        if start is not None:
+            al_ranges.append({"value": value, "fe_bin": fe_bin, "al_min": start, "al_max": prev + step, "si_min": si_min, "si_max": si_max, "n_blocks": blocks, "tonnes": tonnes})
+
+    df_al = pd.DataFrame(al_ranges)
+
+    # Stage 3: merge contiguous FE bins with identical AL/SI interval
+    fe_ranges = []
+    for (value, al_min, al_max, si_min, si_max), grp in df_al.groupby(["value", "al_min", "al_max", "si_min", "si_max"], sort=False):
+        g = grp.sort_values("fe_bin")
+        start = None
+        prev = None
+        blocks = 0
+        tonnes = 0.0
+        for _, r in g.iterrows():
+            fe = float(r["fe_bin"])
+            if start is None:
+                start = prev = fe
+                blocks = int(r["n_blocks"])
+                tonnes = float(r["tonnes"])
+            elif abs(fe - prev - step) < 1e-12:
+                prev = fe
+                blocks += int(r["n_blocks"])
+                tonnes += float(r["tonnes"])
+            else:
+                fe_ranges.append({"value": value, "i_fe_min": start, "i_fe_max": prev + step, "i_al_min": al_min, "i_al_max": al_max, "i_si_min": si_min, "i_si_max": si_max, "n_blocks": blocks, "tonnes": tonnes})
+                start = prev = fe
+                blocks = int(r["n_blocks"])
+                tonnes = float(r["tonnes"])
+        if start is not None:
+            fe_ranges.append({"value": value, "i_fe_min": start, "i_fe_max": prev + step, "i_al_min": al_min, "i_al_max": al_max, "i_si_min": si_min, "i_si_max": si_max, "n_blocks": blocks, "tonnes": tonnes})
+
+    return pd.DataFrame(fe_ranges)
+
 def period_rank_weight(period_index: int, decay: float) -> float:
     return 1.0 / (1.0 + decay * period_index)
 
@@ -260,23 +347,18 @@ TableModel.from_pandas(summary_df).write(output_summary.model_path)
 output_set.append_model("Output Models", output_summary)
 
 
-rommats_definition_df = (
+rommats_cells_df = (
     df_block[df_block["i_rom_mats_vcog"].notna()]
     .assign(value=lambda d: d["i_rom_mats_vcog"].astype(str).str.lower())
     .groupby(["value", "fe_bin", "al_bin", "si_bin"], as_index=False)
     .agg(n_blocks=("i_t", "size"), tonnes=("i_t", "sum"))
-    .assign(
-        i_fe_min=lambda d: d["fe_bin"],
-        i_fe_max=lambda d: d["fe_bin"] + BIN_STEP_SIZE,
-        i_al_min=lambda d: d["al_bin"],
-        i_al_max=lambda d: d["al_bin"] + BIN_STEP_SIZE,
-        i_si_min=lambda d: d["si_bin"],
-        i_si_max=lambda d: d["si_bin"] + BIN_STEP_SIZE,
-    )
-    [["value", "i_fe_min", "i_fe_max", "i_al_min", "i_al_max", "i_si_min", "i_si_max", "n_blocks", "tonnes"]]
-    .sort_values(by=["i_fe_min", "i_al_min", "i_si_min", "value"], ascending=[False, True, True, True])
-    .reset_index(drop=True)
 )
+
+rommats_definition_df = compress_rommats_ranges(rommats_cells_df, BIN_STEP_SIZE)
+rommats_definition_df = rommats_definition_df[
+    ["value", "i_fe_min", "i_fe_max", "i_al_min", "i_al_max", "i_si_min", "i_si_max", "n_blocks", "tonnes"]
+].sort_values(by=["i_fe_min", "i_al_min", "i_si_min", "value"], ascending=[False, True, True, True]).reset_index(drop=True)
+
 output_rommats_definition = handle.create_model("Table", "rommats_definition")
 TableModel.from_pandas(rommats_definition_df).write(output_rommats_definition.model_path)
 output_set.append_model("Output Models", output_rommats_definition)
