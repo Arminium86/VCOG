@@ -236,13 +236,15 @@ missing = [c for c in required_block_cols if c not in df_block.columns]
 if missing:
     raise ValueError(f"Block model missing required columns: {missing}")
 
-required_cut_cols = ["Always Ore", "Always Waste"]
+required_cut_cols = ["Always Ore Fe Threshold", "Always Waste Fe Threshold", "Always Ore Max Si", "Always Ore Max Al"]
 missing_cut = [c for c in required_cut_cols if c not in df_cutoff.columns]
 if missing_cut:
     raise ValueError(f"Cut-off table missing required columns: {missing_cut}")
 
-always_ore_threshold = float(pd.to_numeric(df_cutoff.iloc[0]["Always Ore"], errors="coerce"))
-always_waste_threshold = float(pd.to_numeric(df_cutoff.iloc[0]["Always Waste"], errors="coerce"))
+always_ore_threshold = float(pd.to_numeric(df_cutoff.iloc[0]["Always Ore Fe Threshold"], errors="coerce"))
+always_waste_threshold = float(pd.to_numeric(df_cutoff.iloc[0]["Always Waste Fe Threshold"], errors="coerce"))
+always_ore_max_si = float(pd.to_numeric(df_cutoff.iloc[0]["Always Ore Max Si"], errors="coerce"))
+always_ore_max_al = float(pd.to_numeric(df_cutoff.iloc[0]["Always Ore Max Al"], errors="coerce"))
 
 # Normalize numeric cols
 for c in ["i_fe", "i_si", "i_al", "i_t"]:
@@ -257,7 +259,11 @@ df_block["al_bin"] = make_bin_floor(df_block["i_al"], BIN_STEP_SIZE)
 period_stats = []
 for period in PERIOD_FILTERS:
     df_p = df_block[df_block["FYQ"] == period].copy()
-    df_ao = df_p[df_p["fe_bin"] >= always_ore_threshold].copy()
+    df_ao = df_p[
+        (df_p["fe_bin"] >= always_ore_threshold)
+        & (df_p["i_si"] <= always_ore_max_si)
+        & (df_p["i_al"] <= always_ore_max_al)
+    ].copy()
 
     tonnes = float(df_ao["i_t"].fillna(0).sum())
     row = {
