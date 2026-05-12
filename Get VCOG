@@ -1,0 +1,91 @@
+from workflow.execution.sessionmodelset import SessionModelSet
+from workflow.execution.sessionrunhandle import SessionRunHandle
+
+handle: SessionRunHandle = handle  # type: ignore
+input_set: SessionModelSet = input_set  # type: ignore
+output_set: SessionModelSet = output_set  # type: ignore
+
+from libblocksmith import TableModel  # type: ignore
+import pandas as pd
+
+REQUIRED_COLUMNS = [
+    "fe_bin", "ore", "i_fe", "i_t",
+]
+STEP_SIZE = 0.25
+FE_BIN_THRESHOLD = float(globals().get("fe_bin_threshold", 50))
+
+
+def _validate_columns(table: pd.DataFrame, period_label: str) -> None:
+    missing = [col for col in REQUIRED_COLUMNS if col not in table.columns]
+    if missing:
+        raise ValueError(f"{period_label} is missing required columns: {missing}")
+
+
+def _find_cutoff_row(table: pd.DataFrame, step_size: float, fe_bin_threshold: float) -> pd.Series | None:
+    ore_only = table.loc[table["ore"] == 1].copy()
+    if ore_only.empty:
+        return None
+
+    ore_only["fe_bin_num"] = pd.to_numeric(ore_only["fe_bin"], errors="coerce")
+    ore_only = ore_only.dropna(subset=["fe_bin_num"]).sort_values("fe_bin_num", ascending=True).reset_index(drop=True)
+    if ore_only.empty:
+        return None
+
+    # If cutoff starts above/equal threshold, no truncation is applied.
+    if ore_only.iloc[0]["fe_bin_num"] >= fe_bin_threshold:
+        return ore_only.iloc[0]
+
+    below_threshold = ore_only.loc[ore_only["fe_bin_num"] < fe_bin_threshold].reset_index(drop=True)
+    fe_values = below_threshold["fe_bin_num"].tolist()
+
+    for start_idx in range(len(fe_values)):
+        candidate = fe_values[start_idx:]
+        if len(candidate) <= 1:
+            return below_threshold.iloc[start_idx]
+
+        is_continuous = all(
+            abs((candidate[i + 1] - candidate[i]) - step_size) < 1e-9
+            for i in range(len(candidate) - 1)
+        )
+        if is_continuous:
+            return below_threshold.iloc[start_idx]
+
+    # If no continuous block below threshold, fallback to first row at/above threshold.
+    at_or_above_threshold = ore_only.loc[ore_only["fe_bin_num"] >= fe_bin_threshold]
+    if not at_or_above_threshold.empty:
+        return at_or_above_threshold.iloc[0]
+
+    return None
+
+
+input_models = list(input_set.get_all("Input Models"))
+if len(input_models) < 8:
+    raise ValueError(f"Expected 8 input models, found {len(input_models)}.")
+
+results = []
+for period_number, input_model in enumerate(input_models[:8], start=1):
+    period_name = f"Period {period_number}"
+    df = input_model.read().to_pandas()
+
+    _validate_columns(df, period_name)
+    cutoff_row = _find_cutoff_row(df, STEP_SIZE, FE_BIN_THRESHOLD)
+
+    if cutoff_row is None:
+        cutoff = float("nan")
+        bin_grade = float("nan")
+    else:
+        cutoff = float(cutoff_row["fe_bin_num"])
+        i_fe = pd.to_numeric(pd.Series([cutoff_row["i_fe"]]), errors="coerce").iloc[0]
+        i_t = pd.to_numeric(pd.Series([cutoff_row["i_t"]]), errors="coerce").iloc[0]
+        bin_grade = float(i_fe / i_t) if pd.notna(i_fe) and pd.notna(i_t) and i_t != 0 else float("nan")
+
+    results.append({"Period": period_name, "Fe Cut-off (Bin)": cutoff, "Bin Grade": bin_grade})
+
+output_table = pd.DataFrame(results)
+cutoff_series = pd.to_numeric(output_table["Fe Cut-off (Bin)"], errors="coerce")
+output_table["Always Ore"] = cutoff_series.max(skipna=True)
+output_table["Always Waste"] = cutoff_series.min(skipna=True)
+output_model = handle.create_model("Table", "fe_cutoff_by_period")
+TableModel.from_pandas(output_table).write(output_model.model_path)
+output_set.append_model("Output Models", output_model)
+handle.log_info("Output model written: fe_cutoff_by_period")
