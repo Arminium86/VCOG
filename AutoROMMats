@@ -1,0 +1,262 @@
+from workflow.execution.sessionmodelset import SessionModelSet
+from workflow.execution.sessionrunhandle import SessionRunHandle
+
+handle: SessionRunHandle = handle  # type: ignore
+input_set: SessionModelSet = input_set  # type: ignore
+output_set: SessionModelSet = output_set  # type: ignore
+
+from libblocksmith import TableModel  # type: ignore
+import numpy as np
+import pandas as pd
+
+# =====================
+# User Inputs
+# =====================
+# FYQ period filters (8 periods)
+PERIOD_FILTERS = [
+    "P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8"
+]
+
+# Bin step size from 0..100
+BIN_STEP_SIZE = 0.25
+
+# Torque (TOR) thresholds supplied by user
+TOR_MEAN_FE = 58.0
+TOR_MEAN_SI = 6.0
+TOR_MEAN_AL = 3.0
+
+# Number of swing quantiles (e.g. 3 => SW1, SW2, SW3)
+SWING_QUANTILES = 3
+
+# Weight decay per period index (earlier periods get higher weight)
+# period_priority = 1/(1 + PERIOD_WEIGHT_DECAY * index)
+PERIOD_WEIGHT_DECAY = 0.35
+
+
+# =====================
+# Helpers
+# =====================
+def weighted_mean(values: pd.Series, weights: pd.Series) -> float:
+    w = pd.to_numeric(weights, errors="coerce").fillna(0.0)
+    x = pd.to_numeric(values, errors="coerce")
+    m = w.sum()
+    if m <= 0:
+        return float("nan")
+    return float((x * w).sum() / m)
+
+
+def weighted_std(values: pd.Series, weights: pd.Series) -> float:
+    w = pd.to_numeric(weights, errors="coerce").fillna(0.0)
+    x = pd.to_numeric(values, errors="coerce")
+    m = w.sum()
+    if m <= 0:
+        return float("nan")
+    mu = (x * w).sum() / m
+    var = (w * (x - mu) ** 2).sum() / m
+    return float(np.sqrt(max(var, 0.0)))
+
+
+def make_bin_floor(series: pd.Series, step: float) -> pd.Series:
+    x = pd.to_numeric(series, errors="coerce")
+    return np.floor(x / step) * step
+
+
+def period_rank_weight(period_index: int, decay: float) -> float:
+    return 1.0 / (1.0 + decay * period_index)
+
+
+def weighted_global_stat(period_rows: list[dict], key: str) -> float:
+    numer = 0.0
+    denom = 0.0
+    for idx, row in enumerate(period_rows):
+        tonnes = float(row.get("always_ore_tonnes", 0.0) or 0.0)
+        value = row.get(key, np.nan)
+        if tonnes <= 0 or pd.isna(value):
+            continue
+        w = tonnes * period_rank_weight(idx, PERIOD_WEIGHT_DECAY)
+        numer += w * float(value)
+        denom += w
+    return float(numer / denom) if denom > 0 else float("nan")
+
+
+def classify_always_ore_rom(
+    row: pd.Series,
+    always_waste_threshold: float,
+    mean_fe: float,
+    std_fe: float,
+    mean_si: float,
+    mean_al: float,
+    tor_si: float,
+    tor_al: float,
+):
+    fe = float(row["i_fe"])
+    si = float(row["i_si"])
+    al = float(row["i_al"])
+
+    if fe >= mean_fe + std_fe:
+        return "HG"
+
+    if mean_fe <= fe < mean_fe + std_fe:
+        if (si <= mean_si) and (al <= mean_al):
+            return "HG"
+        return "SO"
+
+    if (mean_fe - std_fe) <= fe < mean_fe:
+        if (si <= tor_si) and (al <= tor_al):
+            return "SO"
+        if (al <= tor_al) and (si > tor_si):
+            return "BA"
+        if (si <= tor_si) and (al > tor_al):
+            return "BS"
+        return "LG"
+
+    if always_waste_threshold <= fe < (mean_fe - std_fe):
+        if (al <= tor_al) and (si > tor_si):
+            return "BA"
+        if (si <= tor_si) and (al > tor_al):
+            return "BS"
+        return "LG"
+
+    return None
+
+
+# =====================
+# Read input models
+# =====================
+df_block = None
+df_cutoff = None
+
+for model in input_set.get_all("Input Models"):
+    label = str(model.label).lower()
+    df = model.read().to_pandas()
+
+    if "fe_cutoff_by_period" in label:
+        df_cutoff = df.copy()
+        handle.log_info(f"Detected cut-off table model: {model.label}")
+    else:
+        # First non cut-off table assumed to be block model
+        if df_block is None:
+            df_block = df.copy()
+            handle.log_info(f"Detected block model: {model.label}")
+
+if df_block is None:
+    raise ValueError("No block model table found in Input Models.")
+if df_cutoff is None:
+    raise ValueError("No fe_cutoff_by_period table found in Input Models.")
+
+required_block_cols = ["FYQ", "i_fe", "i_si", "i_al", "i_t"]
+missing = [c for c in required_block_cols if c not in df_block.columns]
+if missing:
+    raise ValueError(f"Block model missing required columns: {missing}")
+
+required_cut_cols = ["Always Ore", "Always Waste"]
+missing_cut = [c for c in required_cut_cols if c not in df_cutoff.columns]
+if missing_cut:
+    raise ValueError(f"Cut-off table missing required columns: {missing_cut}")
+
+always_ore_threshold = float(pd.to_numeric(df_cutoff.iloc[0]["Always Ore"], errors="coerce"))
+always_waste_threshold = float(pd.to_numeric(df_cutoff.iloc[0]["Always Waste"], errors="coerce"))
+
+# Normalize numeric cols
+for c in ["i_fe", "i_si", "i_al", "i_t"]:
+    df_block[c] = pd.to_numeric(df_block[c], errors="coerce")
+
+# Add bins (0..100 range logic by flooring to step)
+df_block["fe_bin"] = make_bin_floor(df_block["i_fe"], BIN_STEP_SIZE)
+df_block["si_bin"] = make_bin_floor(df_block["i_si"], BIN_STEP_SIZE)
+df_block["al_bin"] = make_bin_floor(df_block["i_al"], BIN_STEP_SIZE)
+
+# Per period Always Ore stats
+period_stats = []
+for period in PERIOD_FILTERS:
+    df_p = df_block[df_block["FYQ"] == period].copy()
+    df_ao = df_p[df_p["fe_bin"] >= always_ore_threshold].copy()
+
+    tonnes = float(df_ao["i_t"].fillna(0).sum())
+    row = {
+        "period": period,
+        "always_ore_tonnes": tonnes,
+        "fe_mean": weighted_mean(df_ao["i_fe"], df_ao["i_t"]) if len(df_ao) else float("nan"),
+        "fe_std": weighted_std(df_ao["i_fe"], df_ao["i_t"]) if len(df_ao) else float("nan"),
+        "si_mean": weighted_mean(df_ao["i_si"], df_ao["i_t"]) if len(df_ao) else float("nan"),
+        "al_mean": weighted_mean(df_ao["i_al"], df_ao["i_t"]) if len(df_ao) else float("nan"),
+    }
+    period_stats.append(row)
+
+# Cross-period weighted stats (tonnes * early-period weight)
+global_fe_mean = weighted_global_stat(period_stats, "fe_mean")
+global_fe_std = weighted_global_stat(period_stats, "fe_std")
+global_si_mean = weighted_global_stat(period_stats, "si_mean")
+global_al_mean = weighted_global_stat(period_stats, "al_mean")
+
+# ROM MAT classification for Always Ore process
+# new column required: i_rom_mats_vcog
+df_block["i_rom_mats_vcog"] = None
+
+eligible_ao = df_block[(df_block["i_fe"] >= always_waste_threshold) & (df_block["i_fe"] < 1000)].copy()
+df_block.loc[eligible_ao.index, "i_rom_mats_vcog"] = eligible_ao.apply(
+    lambda r: classify_always_ore_rom(
+        r,
+        always_waste_threshold=always_waste_threshold,
+        mean_fe=global_fe_mean,
+        std_fe=global_fe_std,
+        mean_si=global_si_mean,
+        mean_al=global_al_mean,
+        tor_si=TOR_MEAN_SI,
+        tor_al=TOR_MEAN_AL,
+    ),
+    axis=1,
+)
+
+# Swing material quantiles: Always Waste <= i_fe < Always Ore (all periods)
+df_swing = df_block[(df_block["i_fe"] >= always_waste_threshold) & (df_block["i_fe"] < always_ore_threshold)].copy()
+if len(df_swing) > 0 and SWING_QUANTILES > 0:
+    df_swing = df_swing.sort_values(by=["i_fe", "i_si", "i_al"], ascending=[False, False, False]).copy()
+    total_t = float(df_swing["i_t"].fillna(0).sum())
+
+    if total_t > 0:
+        boundaries = [(i + 1) / SWING_QUANTILES * total_t for i in range(SWING_QUANTILES)]
+        cum_t = df_swing["i_t"].fillna(0).cumsum().values
+
+        labels = []
+        for v in cum_t:
+            q_idx = 0
+            while q_idx < len(boundaries) - 1 and v > boundaries[q_idx]:
+                q_idx += 1
+            labels.append(f"SW{q_idx + 1}")
+
+        df_swing["swing_label"] = labels
+        df_block.loc[df_swing.index, "i_rom_mats_vcog"] = df_swing["swing_label"]
+
+# Persist outputs
+output_block = handle.create_model("Table", "blockmodel_with_bins_and_rommat")
+TableModel.from_pandas(df_block).write(output_block.model_path)
+output_set.append_model("Output Models", output_block)
+
+output_period_stats = handle.create_model("Table", "always_ore_period_stats")
+TableModel.from_pandas(pd.DataFrame(period_stats)).write(output_period_stats.model_path)
+output_set.append_model("Output Models", output_period_stats)
+
+summary_df = pd.DataFrame(
+    [
+        {
+            "Always_Ore_Threshold": always_ore_threshold,
+            "Always_Waste_Threshold": always_waste_threshold,
+            "Global_Fe_Mean": global_fe_mean,
+            "Global_Fe_STD": global_fe_std,
+            "Global_Si_Mean": global_si_mean,
+            "Global_Al_Mean": global_al_mean,
+            "TOR_Mean_Fe": TOR_MEAN_FE,
+            "TOR_Mean_Si": TOR_MEAN_SI,
+            "TOR_Mean_Al": TOR_MEAN_AL,
+            "Swing_Quantiles": SWING_QUANTILES,
+            "Bin_Step_Size": BIN_STEP_SIZE,
+        }
+    ]
+)
+
+output_summary = handle.create_model("Table", "always_ore_global_summary")
+TableModel.from_pandas(summary_df).write(output_summary.model_path)
+output_set.append_model("Output Models", output_summary)
+
+handle.log_info("Completed Always Ore binning, ROM mat classification, and swing quantile assignment.")
