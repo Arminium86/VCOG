@@ -85,7 +85,9 @@ output_table = pd.DataFrame(results)
 cutoff_series = pd.to_numeric(output_table["Fe Cut-off (Bin)"], errors="coerce")
 always_ore_threshold = cutoff_series.max(skipna=True)
 output_table["Always Ore Fe Threshold"] = always_ore_threshold
-output_table["Always Waste Fe Threshold"] = cutoff_series.min(skipna=True)
+always_waste_threshold = cutoff_series.min(skipna=True)
+output_table["Always Waste Fe Threshold"] = always_waste_threshold
+
 
 # Determine max Si/Al bins across all periods for bins above always ore threshold.
 all_periods = []
@@ -94,18 +96,29 @@ for input_model in input_models[:8]:
     _validate_columns(df, str(input_model.label))
     all_periods.append(df)
 
+
+
 all_periods_df = pd.concat(all_periods, ignore_index=True) if all_periods else pd.DataFrame(columns=REQUIRED_COLUMNS)
 all_periods_df["fe_bin_num"] = pd.to_numeric(all_periods_df["fe_bin"], errors="coerce")
 all_periods_df["si_bin_num"] = pd.to_numeric(all_periods_df["si_bin"], errors="coerce")
 all_periods_df["al_bin_num"] = pd.to_numeric(all_periods_df["al_bin"], errors="coerce")
+all_periods_df = all_periods_df.loc[all_periods_df["ore"] == 1].copy()
 
 if pd.notna(always_ore_threshold):
-    ao_filtered = all_periods_df.loc[all_periods_df["fe_bin_num"] > always_ore_threshold]
+    ao_filtered = all_periods_df.loc[all_periods_df["fe_bin_num"] >= always_ore_threshold]
 else:
     ao_filtered = all_periods_df.iloc[0:0]
 
+if pd.notna(always_waste_threshold):
+    swing_filtered = all_periods_df.loc[(all_periods_df["fe_bin_num"] < always_ore_threshold) & (all_periods_df["fe_bin_num"] >= always_waste_threshold)]
+else:
+    swing_filtered = all_periods_df.iloc[0:0]
+
+
 output_table["Always Ore Max Si"] = pd.to_numeric(ao_filtered["si_bin_num"], errors="coerce").max(skipna=True)
 output_table["Always Ore Max Al"] = pd.to_numeric(ao_filtered["al_bin_num"], errors="coerce").max(skipna=True)
+output_table["Swing Max Si"] = pd.to_numeric(swing_filtered["si_bin_num"], errors="coerce").max(skipna=True)
+output_table["Swing Max Al"] = pd.to_numeric(swing_filtered["al_bin_num"], errors="coerce").max(skipna=True)
 output_model = handle.create_model("Table", "fe_cutoff_by_period")
 TableModel.from_pandas(output_table).write(output_model.model_path)
 output_set.append_model("Output Models", output_model)
