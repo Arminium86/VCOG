@@ -14,7 +14,8 @@ import pandas as pd
 # =====================
 # FYQ period filters (8 periods)
 PERIOD_FILTERS = [
-    "P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8"
+    "FY26Q4", "FY27Q1", "FY27Q2", "FY27Q3", "FY27Q4", "FY28Q1", "FY28Q2", "FY28Q3"
+
 ]
 
 # Bin step size from 0..100
@@ -245,6 +246,8 @@ always_ore_threshold = float(pd.to_numeric(df_cutoff.iloc[0]["Always Ore Fe Thre
 always_waste_threshold = float(pd.to_numeric(df_cutoff.iloc[0]["Always Waste Fe Threshold"], errors="coerce"))
 always_ore_max_si = float(pd.to_numeric(df_cutoff.iloc[0]["Always Ore Max Si"], errors="coerce"))
 always_ore_max_al = float(pd.to_numeric(df_cutoff.iloc[0]["Always Ore Max Al"], errors="coerce"))
+swing_max_si = float(pd.to_numeric(df_cutoff.iloc[0]["Swing Max Si"], errors="coerce"))
+swing_max_al = float(pd.to_numeric(df_cutoff.iloc[0]["Swing Max Al"], errors="coerce"))
 
 # Normalize numeric cols
 for c in ["i_fe", "i_si", "i_al", "i_t"]:
@@ -261,8 +264,8 @@ for period in PERIOD_FILTERS:
     df_p = df_block[df_block["FYQ"] == period].copy()
     df_ao = df_p[
         (df_p["fe_bin"] >= always_ore_threshold)
-        & (df_p["i_si"] <= always_ore_max_si)
-        & (df_p["i_al"] <= always_ore_max_al)
+        & (df_p["si_bin"] <= always_ore_max_si)
+        & (df_p["al_bin"] <= always_ore_max_al)
     ].copy()
 
     tonnes = float(df_ao["i_t"].fillna(0).sum())
@@ -286,7 +289,7 @@ global_al_mean = weighted_global_stat(period_stats, "al_mean")
 # new column required: i_rom_mats_vcog
 df_block["i_rom_mats_vcog"] = None
 
-eligible_ao = df_block[(df_block["i_fe"] >= always_waste_threshold) & (df_block["i_fe"] < 1000)].copy()
+eligible_ao = df_block[(df_block["fe_bin"] >= always_ore_threshold) & (df_block["fe_bin"] < 1000) & (df_block["si_bin"] <= always_ore_max_si) & (df_block["al_bin"] <= always_ore_max_al)].copy() 
 df_block.loc[eligible_ao.index, "i_rom_mats_vcog"] = eligible_ao.apply(
     lambda r: classify_always_ore_rom(
         r,
@@ -302,7 +305,7 @@ df_block.loc[eligible_ao.index, "i_rom_mats_vcog"] = eligible_ao.apply(
 )
 
 # Swing material quantiles: Always Waste <= i_fe < Always Ore (all periods)
-df_swing = df_block[(df_block["i_fe"] >= always_waste_threshold) & (df_block["i_fe"] < always_ore_threshold)].copy()
+df_swing = df_block[(df_block["fe_bin"] >= always_waste_threshold) & (df_block["fe_bin"] < always_ore_threshold) & (df_block["si_bin"] <= swing_max_si) & (df_block["al_bin"] <= swing_max_al)].copy()
 if len(df_swing) > 0 and SWING_QUANTILES > 0:
     df_swing = df_swing.sort_values(by=["i_fe", "i_si", "i_al"], ascending=[False, False, False]).copy()
     total_t = float(df_swing["i_t"].fillna(0).sum())
@@ -326,9 +329,9 @@ output_block = handle.create_model("Table", "blockmodel_with_bins_and_rommat")
 TableModel.from_pandas(df_block).write(output_block.model_path)
 output_set.append_model("Output Models", output_block)
 
-output_period_stats = handle.create_model("Table", "always_ore_period_stats")
-TableModel.from_pandas(pd.DataFrame(period_stats)).write(output_period_stats.model_path)
-output_set.append_model("Output Models", output_period_stats)
+#output_period_stats = handle.create_model("Table", "always_ore_period_stats")
+#TableModel.from_pandas(pd.DataFrame(period_stats)).write(output_period_stats.model_path)
+#output_set.append_model("Output Models", output_period_stats)
 
 summary_df = pd.DataFrame(
     [
@@ -348,9 +351,9 @@ summary_df = pd.DataFrame(
     ]
 )
 
-output_summary = handle.create_model("Table", "always_ore_global_summary")
-TableModel.from_pandas(summary_df).write(output_summary.model_path)
-output_set.append_model("Output Models", output_summary)
+#output_summary = handle.create_model("Table", "always_ore_global_summary")
+#TableModel.from_pandas(summary_df).write(output_summary.model_path)
+#output_set.append_model("Output Models", output_summary)
 
 
 rommats_cells_df = (
@@ -365,9 +368,9 @@ rommats_definition_df = rommats_definition_df[
     ["value", "i_fe_min", "i_fe_max", "i_al_min", "i_al_max", "i_si_min", "i_si_max", "n_blocks", "tonnes"]
 ].sort_values(by=["i_fe_min", "i_al_min", "i_si_min", "value"], ascending=[False, True, True, True]).reset_index(drop=True)
 
-output_rommats_definition = handle.create_model("Table", "rommats_definition")
-TableModel.from_pandas(rommats_definition_df).write(output_rommats_definition.model_path)
-output_set.append_model("Output Models", output_rommats_definition)
+#output_rommats_definition = handle.create_model("Table", "rommats_definition")
+#TableModel.from_pandas(rommats_definition_df).write(output_rommats_definition.model_path)
+#output_set.append_model("Output Models", output_rommats_definition)
 
 
 rommats_definition_aggregated_df = (
@@ -387,8 +390,8 @@ rommats_definition_aggregated_df = (
     .sort_values(by=["i_fe_min", "value"], ascending=[False, True])
     .reset_index(drop=True)
 )
-output_rommats_definition_aggregated = handle.create_model("Table", "rommats_definition_aggregated")
-TableModel.from_pandas(rommats_definition_aggregated_df).write(output_rommats_definition_aggregated.model_path)
-output_set.append_model("Output Models", output_rommats_definition_aggregated)
+#output_rommats_definition_aggregated = handle.create_model("Table", "rommats_definition_aggregated")
+#TableModel.from_pandas(rommats_definition_aggregated_df).write(output_rommats_definition_aggregated.model_path)
+#output_set.append_model("Output Models", output_rommats_definition_aggregated)
 
 handle.log_info("Completed Always Ore binning, ROM mat classification, and swing quantile assignment.")
