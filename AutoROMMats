@@ -285,7 +285,7 @@ global_fe_std = weighted_global_stat(period_stats, "fe_std")
 global_si_mean = weighted_global_stat(period_stats, "si_mean")
 global_al_mean = weighted_global_stat(period_stats, "al_mean")
 
-# ROM MAT classification for Always Ore process
+# ROM MAT classification in Fe/Si/Al space (non-overlapping by Fe ranges and max Si/Al constraints)
 # new column required: i_rom_mats_vcog
 df_block["i_rom_mats_vcog"] = None
 
@@ -305,7 +305,7 @@ df_block.loc[eligible_ao.index, "i_rom_mats_vcog"] = eligible_ao.apply(
 )
 
 # Swing material quantiles: Always Waste <= i_fe < Always Ore (all periods)
-df_swing = df_block[(df_block["fe_bin"] >= always_waste_threshold) & (df_block["fe_bin"] < always_ore_threshold) & (df_block["si_bin"] <= swing_max_si) & (df_block["al_bin"] <= swing_max_al)].copy()
+df_swing = df_block[(df_block["i_rom_mats_vcog"].isna()) & (df_block["fe_bin"] >= always_waste_threshold) & (df_block["fe_bin"] < always_ore_threshold) & (df_block["si_bin"] <= swing_max_si) & (df_block["al_bin"] <= swing_max_al)].copy()
 if len(df_swing) > 0 and SWING_QUANTILES > 0:
     df_swing = df_swing.sort_values(by=["i_fe", "i_si", "i_al"], ascending=[False, False, False]).copy()
     total_t = float(df_swing["i_t"].fillna(0).sum())
@@ -356,42 +356,146 @@ summary_df = pd.DataFrame(
 #output_set.append_model("Output Models", output_summary)
 
 
-rommats_cells_df = (
+# Build rommat_definition ranges directly from classification logic (no compression)
+rows = []
+
+# Always Ore HG / SO space: fe >= mean_fe up to 100, bounded by always ore Si/Al maxima
+hg_high_fe_min = global_fe_mean + global_fe_std
+if pd.notna(hg_high_fe_min) and hg_high_fe_min < 100:
+    rows.append({
+        "value": "hg",
+        "i_fe_min": hg_high_fe_min,
+        "i_fe_max": 100.0,
+        "i_al_min": 0.0,
+        "i_al_max": always_ore_max_al,
+        "i_si_min": 0.0,
+        "i_si_max": always_ore_max_si,
+    })
+
+if pd.notna(global_fe_mean) and pd.notna(global_fe_std):
+    fe_mid_min = global_fe_mean
+    fe_mid_max = global_fe_mean + global_fe_std
+
+    if fe_mid_max > fe_mid_min:
+        # HG: low Si and low Al
+        rows.append({
+            "value": "hg",
+            "i_fe_min": fe_mid_min,
+            "i_fe_max": fe_mid_max,
+            "i_al_min": 0.0,
+            "i_al_max": global_al_mean,
+            "i_si_min": 0.0,
+            "i_si_max": global_si_mean,
+        })
+
+        # SO complements inside Always Ore maxima (non-overlapping with HG above)
+        rows.append({
+            "value": "so",
+            "i_fe_min": fe_mid_min,
+            "i_fe_max": fe_mid_max,
+            "i_al_min": global_al_mean,
+            "i_al_max": always_ore_max_al,
+            "i_si_min": 0.0,
+            "i_si_max": global_si_mean,
+        })
+        rows.append({
+            "value": "so",
+            "i_fe_min": fe_mid_min,
+            "i_fe_max": fe_mid_max,
+            "i_al_min": 0.0,
+            "i_al_max": global_al_mean,
+            "i_si_min": global_si_mean,
+            "i_si_max": always_ore_max_si,
+        })
+        rows.append({
+            "value": "so",
+            "i_fe_min": fe_mid_min,
+            "i_fe_max": fe_mid_max,
+            "i_al_min": global_al_mean,
+            "i_al_max": always_ore_max_al,
+            "i_si_min": global_si_mean,
+            "i_si_max": always_ore_max_si,
+        })
+
+# Additional Always Ore / Swing classes from helper thresholds
+low_fe_min = always_waste_threshold
+low_fe_max = global_fe_mean
+mid_low_fe_min = global_fe_mean - global_fe_std
+
+if pd.notna(low_fe_min) and pd.notna(mid_low_fe_min) and pd.notna(low_fe_max):
+    # BA / BS / LG in lower Fe band: always_waste <= fe < mean_fe-std_fe
+    if mid_low_fe_min > low_fe_min:
+        rows.extend([
+            {"value": "ba", "i_fe_min": low_fe_min, "i_fe_max": mid_low_fe_min, "i_al_min": 0.0, "i_al_max": TOR_MEAN_AL, "i_si_min": TOR_MEAN_SI, "i_si_max": swing_max_si},
+            {"value": "bs", "i_fe_min": low_fe_min, "i_fe_max": mid_low_fe_min, "i_al_min": TOR_MEAN_AL, "i_al_max": swing_max_al, "i_si_min": 0.0, "i_si_max": TOR_MEAN_SI},
+            {"value": "lg", "i_fe_min": low_fe_min, "i_fe_max": mid_low_fe_min, "i_al_min": TOR_MEAN_AL, "i_al_max": swing_max_al, "i_si_min": TOR_MEAN_SI, "i_si_max": swing_max_si},
+        ])
+
+    # SO / BA / BS / LG in mid Fe band: mean_fe-std_fe <= fe < mean_fe
+    if low_fe_max > mid_low_fe_min:
+        rows.extend([
+            {"value": "so", "i_fe_min": mid_low_fe_min, "i_fe_max": low_fe_max, "i_al_min": 0.0, "i_al_max": TOR_MEAN_AL, "i_si_min": 0.0, "i_si_max": TOR_MEAN_SI},
+            {"value": "ba", "i_fe_min": mid_low_fe_min, "i_fe_max": low_fe_max, "i_al_min": 0.0, "i_al_max": TOR_MEAN_AL, "i_si_min": TOR_MEAN_SI, "i_si_max": swing_max_si},
+            {"value": "bs", "i_fe_min": mid_low_fe_min, "i_fe_max": low_fe_max, "i_al_min": TOR_MEAN_AL, "i_al_max": swing_max_al, "i_si_min": 0.0, "i_si_max": TOR_MEAN_SI},
+            {"value": "lg", "i_fe_min": mid_low_fe_min, "i_fe_max": low_fe_max, "i_al_min": TOR_MEAN_AL, "i_al_max": swing_max_al, "i_si_min": TOR_MEAN_SI, "i_si_max": swing_max_si},
+        ])
+
+rommat_definition_df = pd.DataFrame(rows)
+
+# Swing definitions are derived from classified cells (quantiles come from data, not explicit rule planes)
+swing_cells_df = (
+    df_block[df_block["i_rom_mats_vcog"].notna()]
+    .assign(value=lambda d: d["i_rom_mats_vcog"].astype(str).str.lower())
+)
+swing_cells_df = swing_cells_df[swing_cells_df["value"].str.match(r"^sw\d+$", na=False)]
+
+if len(swing_cells_df) > 0:
+    swing_grouped_df = (
+        swing_cells_df.groupby(["value", "fe_bin", "al_bin", "si_bin"], as_index=False)
+        .agg(
+            n_blocks=("i_t", "size"),
+            tonnes=("i_t", "sum"),
+            i_fe_min=("i_fe", "min"),
+            i_fe_max=("i_fe", "max"),
+            i_al_min=("i_al", "min"),
+            i_al_max=("i_al", "max"),
+            i_si_min=("i_si", "min"),
+            i_si_max=("i_si", "max"),
+        )
+    )
+    swing_ranges_df = swing_grouped_df[["value", "i_fe_min", "i_fe_max", "i_al_min", "i_al_max", "i_si_min", "i_si_max"]]
+    rommat_definition_df = pd.concat([rommat_definition_df, swing_ranges_df], ignore_index=True)
+
+if len(rommat_definition_df) > 0:
+    # Clamp numeric bounds and keep only valid, non-empty ranges
+    rommat_definition_df["i_fe_min"] = pd.to_numeric(rommat_definition_df["i_fe_min"], errors="coerce").clip(lower=0)
+    rommat_definition_df["i_fe_max"] = pd.to_numeric(rommat_definition_df["i_fe_max"], errors="coerce").clip(lower=0, upper=100)
+    rommat_definition_df["i_al_min"] = pd.to_numeric(rommat_definition_df["i_al_min"], errors="coerce").clip(lower=0)
+    rommat_definition_df["i_al_max"] = pd.to_numeric(rommat_definition_df["i_al_max"], errors="coerce").clip(lower=0)
+    rommat_definition_df["i_si_min"] = pd.to_numeric(rommat_definition_df["i_si_min"], errors="coerce").clip(lower=0)
+    rommat_definition_df["i_si_max"] = pd.to_numeric(rommat_definition_df["i_si_max"], errors="coerce").clip(lower=0)
+
+    rommat_definition_df = rommat_definition_df[
+        (rommat_definition_df["i_fe_max"] > rommat_definition_df["i_fe_min"])
+        & (rommat_definition_df["i_al_max"] > rommat_definition_df["i_al_min"])
+        & (rommat_definition_df["i_si_max"] > rommat_definition_df["i_si_min"])
+    ].sort_values(by=["i_fe_min", "i_al_min", "i_si_min", "value"], ascending=[False, True, True, True]).reset_index(drop=True)
+
+# Also provide granular rommat_definition cells (pre-compression style)
+rommat_definition_granular_df = (
     df_block[df_block["i_rom_mats_vcog"].notna()]
     .assign(value=lambda d: d["i_rom_mats_vcog"].astype(str).str.lower())
     .groupby(["value", "fe_bin", "al_bin", "si_bin"], as_index=False)
     .agg(n_blocks=("i_t", "size"), tonnes=("i_t", "sum"))
-)
-
-rommats_definition_df = compress_rommats_ranges(rommats_cells_df, BIN_STEP_SIZE)
-rommats_definition_df = rommats_definition_df[
-    ["value", "i_fe_min", "i_fe_max", "i_al_min", "i_al_max", "i_si_min", "i_si_max", "n_blocks", "tonnes"]
-].sort_values(by=["i_fe_min", "i_al_min", "i_si_min", "value"], ascending=[False, True, True, True]).reset_index(drop=True)
-
-#output_rommats_definition = handle.create_model("Table", "rommats_definition")
-#TableModel.from_pandas(rommats_definition_df).write(output_rommats_definition.model_path)
-#output_set.append_model("Output Models", output_rommats_definition)
-
-
-rommats_definition_aggregated_df = (
-    df_block[df_block["i_rom_mats_vcog"].notna()]
-    .assign(value=lambda d: d["i_rom_mats_vcog"].astype(str).str.lower())
-    .groupby("value", as_index=False)
-    .agg(
-        i_fe_min=("i_fe", "min"),
-        i_fe_max=("i_fe", "max"),
-        i_al_min=("i_al", "min"),
-        i_al_max=("i_al", "max"),
-        i_si_min=("i_si", "min"),
-        i_si_max=("i_si", "max"),
-        n_blocks=("i_t", "size"),
-        tonnes=("i_t", "sum"),
-    )
-    .sort_values(by=["i_fe_min", "value"], ascending=[False, True])
+    .sort_values(by=["fe_bin", "al_bin", "si_bin", "value"], ascending=[False, True, True, True])
     .reset_index(drop=True)
 )
-#output_rommats_definition_aggregated = handle.create_model("Table", "rommats_definition_aggregated")
-#TableModel.from_pandas(rommats_definition_aggregated_df).write(output_rommats_definition_aggregated.model_path)
-#output_set.append_model("Output Models", output_rommats_definition_aggregated)
+output_rommat_definition_granular = handle.create_model("Table", "rommat_definition_granular")
+TableModel.from_pandas(rommat_definition_granular_df).write(output_rommat_definition_granular.model_path)
+output_set.append_model("Output Models", output_rommat_definition_granular)
 
-handle.log_info("Completed Always Ore binning, ROM mat classification, and swing quantile assignment.")
+output_rommat_definition = handle.create_model("Table", "rommat_definition")
+TableModel.from_pandas(rommat_definition_df).write(output_rommat_definition.model_path)
+output_set.append_model("Output Models", output_rommat_definition)
+
+handle.log_info("Completed Always Ore binning, ROM mat classification, swing quantile assignment, and rommat_definition output.")
