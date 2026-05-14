@@ -203,6 +203,8 @@ def classify_always_ore_rom(
             return "BA"
         if (si <= tor_si) and (al > tor_al):
             return "BS"
+        if (si <= tor_si) and (al <= tor_al):
+            return "SW1"
         return "LG"
 
     return None
@@ -237,7 +239,7 @@ missing = [c for c in required_block_cols if c not in df_block.columns]
 if missing:
     raise ValueError(f"Block model missing required columns: {missing}")
 
-required_cut_cols = ["Always Ore Fe Threshold", "Always Waste Fe Threshold", "Always Ore Max Si", "Always Ore Min Si", "Always Ore Max Al", "Always Ore Min Al", "Swing Max Si", "Swing Min Si", "Swing Max Al", "Swing Min Al"]
+required_cut_cols = ["Always Ore Fe Threshold", "Always Waste Fe Threshold", "Always Ore Max Si", "Always Ore Max Al"]
 missing_cut = [c for c in required_cut_cols if c not in df_cutoff.columns]
 if missing_cut:
     raise ValueError(f"Cut-off table missing required columns: {missing_cut}")
@@ -245,13 +247,9 @@ if missing_cut:
 always_ore_threshold = float(pd.to_numeric(df_cutoff.iloc[0]["Always Ore Fe Threshold"], errors="coerce"))
 always_waste_threshold = float(pd.to_numeric(df_cutoff.iloc[0]["Always Waste Fe Threshold"], errors="coerce"))
 always_ore_max_si = float(pd.to_numeric(df_cutoff.iloc[0]["Always Ore Max Si"], errors="coerce"))
-always_ore_min_si = float(pd.to_numeric(df_cutoff.iloc[0]["Always Ore Min Si"], errors="coerce"))
 always_ore_max_al = float(pd.to_numeric(df_cutoff.iloc[0]["Always Ore Max Al"], errors="coerce"))
-always_ore_min_al = float(pd.to_numeric(df_cutoff.iloc[0]["Always Ore Min Al"], errors="coerce"))
 swing_max_si = float(pd.to_numeric(df_cutoff.iloc[0]["Swing Max Si"], errors="coerce"))
-swing_min_si = float(pd.to_numeric(df_cutoff.iloc[0]["Swing Min Si"], errors="coerce"))
 swing_max_al = float(pd.to_numeric(df_cutoff.iloc[0]["Swing Max Al"], errors="coerce"))
-swing_min_al = float(pd.to_numeric(df_cutoff.iloc[0]["Swing Min Al"], errors="coerce"))
 
 # Normalize numeric cols
 for c in ["i_fe", "i_si", "i_al", "i_t"]:
@@ -350,13 +348,9 @@ summary_df = pd.DataFrame(
             "TOR_Mean_Si": TOR_MEAN_SI,
             "TOR_Mean_Al": TOR_MEAN_AL,
             "AO_Max_Si": always_ore_max_si,
-            "AO_Min_Si": always_ore_min_si,
             "AO_Max_Al": always_ore_max_al,
-            "AO_Min_Al": always_ore_min_al,
             "Swing_Max_Si": swing_max_si,
-            "Swing_Min_Si": swing_min_si,
             "Swing_Max_Al": swing_max_al,
-            "Swing_Min_Al": swing_min_al,
             "Swing_Quantiles": SWING_QUANTILES,
             "Period_Weight_Decay": PERIOD_WEIGHT_DECAY,
             "Bin_Step_Size": BIN_STEP_SIZE,
