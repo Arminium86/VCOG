@@ -485,18 +485,36 @@ if len(rommat_definition_df) > 0:
         & (rommat_definition_df["i_si_max"] > rommat_definition_df["i_si_min"])
     ].sort_values(by=["i_fe_min", "i_al_min", "i_si_min", "value"], ascending=[False, True, True, True]).reset_index(drop=True)
 
-# Also provide granular rommat_definition cells (pre-compression style)
+# Also provide granular rommat_definition tables (same headers as rommat_definition)
 rommat_definition_granular_df = (
     df_block[df_block["i_rom_mats_vcog"].notna()]
     .assign(value=lambda d: d["i_rom_mats_vcog"].astype(str).str.lower())
-    .groupby(["value", "fe_bin", "al_bin", "si_bin"], as_index=False)
-    .agg(n_blocks=("i_t", "size"), tonnes=("i_t", "sum"))
-    .sort_values(by=["fe_bin", "al_bin", "si_bin", "value"], ascending=[False, True, True, True])
+    .groupby(["value", "fe_bin", "si_bin", "al_bin"], as_index=False)
+    .agg(
+        i_fe_min=("i_fe", "min"),
+        i_fe_max=("i_fe", "max"),
+        i_al_min=("i_al", "min"),
+        i_al_max=("i_al", "max"),
+        i_si_min=("i_si", "min"),
+        i_si_max=("i_si", "max"),
+    )
+    [["value", "i_fe_min", "i_fe_max", "i_al_min", "i_al_max", "i_si_min", "i_si_max"]]
+    .sort_values(by=["i_fe_min", "i_al_min", "i_si_min", "value"], ascending=[False, True, True, True])
     .reset_index(drop=True)
 )
+
+rommat_definition_granular_floored_df = rommat_definition_granular_df.copy()
+if len(rommat_definition_granular_floored_df) > 0:
+    for c in ["i_fe_min", "i_fe_max", "i_al_min", "i_al_max", "i_si_min", "i_si_max"]:
+        rommat_definition_granular_floored_df[c] = make_bin_floor(rommat_definition_granular_floored_df[c], BIN_STEP_SIZE)
+
 output_rommat_definition_granular = handle.create_model("Table", "rommat_definition_granular")
 TableModel.from_pandas(rommat_definition_granular_df).write(output_rommat_definition_granular.model_path)
 output_set.append_model("Output Models", output_rommat_definition_granular)
+
+output_rommat_definition_granular_floored = handle.create_model("Table", "rommat_definition_granular_floored")
+TableModel.from_pandas(rommat_definition_granular_floored_df).write(output_rommat_definition_granular_floored.model_path)
+output_set.append_model("Output Models", output_rommat_definition_granular_floored)
 
 output_rommat_definition = handle.create_model("Table", "rommat_definition")
 TableModel.from_pandas(rommat_definition_df).write(output_rommat_definition.model_path)
