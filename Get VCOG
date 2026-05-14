@@ -116,9 +116,13 @@ else:
 
 
 output_table["Always Ore Max Si"] = pd.to_numeric(ao_filtered["si_bin_num"], errors="coerce").max(skipna=True)
+output_table["Always Ore Min Si"] = pd.to_numeric(ao_filtered["si_bin_num"], errors="coerce").min(skipna=True)
 output_table["Always Ore Max Al"] = pd.to_numeric(ao_filtered["al_bin_num"], errors="coerce").max(skipna=True)
+output_table["Always Ore Min Al"] = pd.to_numeric(ao_filtered["al_bin_num"], errors="coerce").min(skipna=True)
 output_table["Swing Max Si"] = pd.to_numeric(swing_filtered["si_bin_num"], errors="coerce").max(skipna=True)
+output_table["Swing Min Si"] = pd.to_numeric(swing_filtered["si_bin_num"], errors="coerce").min(skipna=True)
 output_table["Swing Max Al"] = pd.to_numeric(swing_filtered["al_bin_num"], errors="coerce").max(skipna=True)
+output_table["Swing Min Al"] = pd.to_numeric(swing_filtered["al_bin_num"], errors="coerce").min(skipna=True)
 output_model = handle.create_model("Table", "fe_cutoff_by_period")
 TableModel.from_pandas(output_table).write(output_model.model_path)
 output_set.append_model("Output Models", output_model)
