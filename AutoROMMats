@@ -490,23 +490,19 @@ rommat_definition_granular_df = (
     df_block[df_block["i_rom_mats_vcog"].notna()]
     .assign(value=lambda d: d["i_rom_mats_vcog"].astype(str).str.lower())
     .groupby(["value", "fe_bin", "si_bin", "al_bin"], as_index=False)
-    .agg(
-        i_fe_min=("i_fe", "min"),
-        i_fe_max=("i_fe", "max"),
-        i_al_min=("i_al", "min"),
-        i_al_max=("i_al", "max"),
-        i_si_min=("i_si", "min"),
-        i_si_max=("i_si", "max"),
-    )
-    [["value", "i_fe_min", "i_fe_max", "i_al_min", "i_al_max", "i_si_min", "i_si_max"]]
-    .sort_values(by=["i_fe_min", "i_al_min", "i_si_min", "value"], ascending=[False, True, True, True])
-    .reset_index(drop=True)
+    .agg(n_blocks=("i_t", "size"), tonnes=("i_t", "sum"))
 )
+rommat_definition_granular_df = rommat_definition_granular_df.rename(
+    columns={"fe_bin": "i_fe_min", "al_bin": "i_al_min", "si_bin": "i_si_min"}
+)
+rommat_definition_granular_df["i_fe_max"] = rommat_definition_granular_df["i_fe_min"] + BIN_STEP_SIZE
+rommat_definition_granular_df["i_al_max"] = rommat_definition_granular_df["i_al_min"] + BIN_STEP_SIZE
+rommat_definition_granular_df["i_si_max"] = rommat_definition_granular_df["i_si_min"] + BIN_STEP_SIZE
+rommat_definition_granular_df = rommat_definition_granular_df[
+    ["value", "i_fe_min", "i_fe_max", "i_al_min", "i_al_max", "i_si_min", "i_si_max"]
+].sort_values(by=["i_fe_min", "i_al_min", "i_si_min", "value"], ascending=[False, True, True, True]).reset_index(drop=True)
 
 rommat_definition_granular_floored_df = rommat_definition_granular_df.copy()
-if len(rommat_definition_granular_floored_df) > 0:
-    for c in ["i_fe_min", "i_fe_max", "i_al_min", "i_al_max", "i_si_min", "i_si_max"]:
-        rommat_definition_granular_floored_df[c] = make_bin_floor(rommat_definition_granular_floored_df[c], BIN_STEP_SIZE)
 
 output_rommat_definition_granular = handle.create_model("Table", "rommat_definition_granular")
 TableModel.from_pandas(rommat_definition_granular_df).write(output_rommat_definition_granular.model_path)
