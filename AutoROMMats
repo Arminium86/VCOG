@@ -22,12 +22,12 @@ PERIOD_FILTERS = [
 BIN_STEP_SIZE = 0.25
 
 # Torque (TOR) thresholds supplied by user
-TOR_MEAN_FE = 58.0
-TOR_MEAN_SI = 6.0
-TOR_MEAN_AL = 3.0
+TOR_MEAN_FE = 56.8
+TOR_MEAN_SI = 5.9
+TOR_MEAN_AL = 3.1
 
 # Number of swing quantiles (e.g. 3 => SW1, SW2, SW3)
-SWING_QUANTILES = 3
+SWING_QUANTILES = 6
 
 # Weight decay per period index (earlier periods get higher weight)
 # period_priority = 1/(1 + PERIOD_WEIGHT_DECAY * index)
@@ -336,17 +336,17 @@ output_set.append_model("Output Models", output_block)
 summary_df = pd.DataFrame(
     [
         {
-            "Always_Ore_Threshold": always_ore_threshold,
-            "Always_Waste_Threshold": always_waste_threshold,
-            "Global_Fe_Mean": global_fe_mean,
-            "Global_Fe_STD": global_fe_std,
-            "Global_Si_Mean": global_si_mean,
-            "Global_Al_Mean": global_al_mean,
+            "Always_Ore_Fe_Threshold": always_ore_threshold,
+            "Always_Waste_Fe_Threshold": always_waste_threshold,
+            "Global_AO_Fe_Mean": global_fe_mean,
+            "Global_AO_Fe_STD": global_fe_std,
+            "Global_AO_Si_Mean": global_si_mean,
+            "Global_AO_Al_Mean": global_al_mean,
             "TOR_Mean_Fe": TOR_MEAN_FE,
             "TOR_Mean_Si": TOR_MEAN_SI,
             "TOR_Mean_Al": TOR_MEAN_AL,
-            "Always_Ore_Max_Si": always_ore_max_si,
-            "Always_Ore_Max_Al": always_ore_max_al,
+            "AO_Max_Si": always_ore_max_si,
+            "AO_Max_Al": always_ore_max_al,
             "Swing_Max_Si": swing_max_si,
             "Swing_Max_Al": swing_max_al,
             "Swing_Quantiles": SWING_QUANTILES,
