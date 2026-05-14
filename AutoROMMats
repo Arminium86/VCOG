@@ -451,7 +451,7 @@ swing_cells_df = swing_cells_df[swing_cells_df["value"].str.match(r"^sw\d+$", na
 
 if len(swing_cells_df) > 0:
     swing_grouped_df = (
-        swing_cells_df.groupby(["value", "fe_bin", "al_bin", "si_bin"], as_index=False)
+        swing_cells_df.groupby(["value"], as_index=False)
         .agg(
             n_blocks=("i_t", "size"),
             tonnes=("i_t", "sum"),
