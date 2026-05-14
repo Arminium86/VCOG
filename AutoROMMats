@@ -204,7 +204,7 @@ def classify_always_ore_rom(
         if (si <= tor_si) and (al > tor_al):
             return "BS"
         if (si <= tor_si) and (al <= tor_al):
-            return "SW0"
+            return "SW1"
         return "LG"
 
     return None
@@ -331,10 +331,6 @@ output_block = handle.create_model("Table", "blockmodel_with_bins_and_rommat")
 TableModel.from_pandas(df_block).write(output_block.model_path)
 output_set.append_model("Output Models", output_block)
 
-#output_period_stats = handle.create_model("Table", "always_ore_period_stats")
-#TableModel.from_pandas(pd.DataFrame(period_stats)).write(output_period_stats.model_path)
-#output_set.append_model("Output Models", output_period_stats)
-
 summary_df = pd.DataFrame(
     [
         {
@@ -358,11 +354,6 @@ summary_df = pd.DataFrame(
     ]
 )
 
-#output_summary = handle.create_model("Table", "always_ore_global_summary")
-#TableModel.from_pandas(summary_df).write(output_summary.model_path)
-#output_set.append_model("Output Models", output_summary)
-
-
 # Build rommat_definition ranges directly from classification logic (no compression)
 rows = []
 
@@ -370,7 +361,7 @@ rows = []
 hg_high_fe_min = global_fe_mean + global_fe_std
 if pd.notna(hg_high_fe_min) and hg_high_fe_min < 100:
     rows.append({
-        "value": "hg",
+        "value": "hg1",
         "i_fe_min": hg_high_fe_min,
         "i_fe_max": 100.0,
         "i_al_min": 0.0,
@@ -386,7 +377,7 @@ if pd.notna(global_fe_mean) and pd.notna(global_fe_std):
     if fe_mid_max > fe_mid_min:
         # HG: low Si and low Al
         rows.append({
-            "value": "hg",
+            "value": "hg2",
             "i_fe_min": fe_mid_min,
             "i_fe_max": fe_mid_max,
             "i_al_min": 0.0,
@@ -397,7 +388,7 @@ if pd.notna(global_fe_mean) and pd.notna(global_fe_std):
 
         # SO complements inside Always Ore maxima (non-overlapping with HG above)
         rows.append({
-            "value": "so",
+            "value": "so1",
             "i_fe_min": fe_mid_min,
             "i_fe_max": fe_mid_max,
             "i_al_min": global_al_mean,
@@ -406,7 +397,7 @@ if pd.notna(global_fe_mean) and pd.notna(global_fe_std):
             "i_si_max": global_si_mean,
         })
         rows.append({
-            "value": "so",
+            "value": "so1",
             "i_fe_min": fe_mid_min,
             "i_fe_max": fe_mid_max,
             "i_al_min": 0.0,
@@ -415,7 +406,7 @@ if pd.notna(global_fe_mean) and pd.notna(global_fe_std):
             "i_si_max": always_ore_max_si,
         })
         rows.append({
-            "value": "so",
+            "value": "so1",
             "i_fe_min": fe_mid_min,
             "i_fe_max": fe_mid_max,
             "i_al_min": global_al_mean,
@@ -433,18 +424,19 @@ if pd.notna(low_fe_min) and pd.notna(mid_low_fe_min) and pd.notna(low_fe_max):
     # BA / BS / LG in lower Fe band: always_waste <= fe < mean_fe-std_fe
     if mid_low_fe_min > low_fe_min:
         rows.extend([
-            {"value": "ba", "i_fe_min": low_fe_min, "i_fe_max": mid_low_fe_min, "i_al_min": 0.0, "i_al_max": TOR_MEAN_AL, "i_si_min": TOR_MEAN_SI, "i_si_max": swing_max_si},
-            {"value": "bs", "i_fe_min": low_fe_min, "i_fe_max": mid_low_fe_min, "i_al_min": TOR_MEAN_AL, "i_al_max": swing_max_al, "i_si_min": 0.0, "i_si_max": TOR_MEAN_SI},
-            {"value": "lg", "i_fe_min": low_fe_min, "i_fe_max": mid_low_fe_min, "i_al_min": TOR_MEAN_AL, "i_al_max": swing_max_al, "i_si_min": TOR_MEAN_SI, "i_si_max": swing_max_si},
+            {"value": "ba1", "i_fe_min": low_fe_min, "i_fe_max": mid_low_fe_min, "i_al_min": 0.0, "i_al_max": TOR_MEAN_AL, "i_si_min": TOR_MEAN_SI, "i_si_max": swing_max_si},
+            {"value": "bs1", "i_fe_min": low_fe_min, "i_fe_max": mid_low_fe_min, "i_al_min": TOR_MEAN_AL, "i_al_max": swing_max_al, "i_si_min": 0.0, "i_si_max": TOR_MEAN_SI},
+            {"value": "lg3", "i_fe_min": low_fe_min, "i_fe_max": mid_low_fe_min, "i_al_min": TOR_MEAN_AL, "i_al_max": swing_max_al, "i_si_min": TOR_MEAN_SI, "i_si_max": swing_max_si},
+            {"value": "lg2", "i_fe_min": low_fe_min, "i_fe_max": mid_low_fe_min, "i_al_min": 0.0, "i_al_max": TOR_MEAN_AL, "i_si_min": 0.0, "i_si_max": TOR_MEAN_SI}
         ])
 
     # SO / BA / BS / LG in mid Fe band: mean_fe-std_fe <= fe < mean_fe
     if low_fe_max > mid_low_fe_min:
         rows.extend([
-            {"value": "so", "i_fe_min": mid_low_fe_min, "i_fe_max": low_fe_max, "i_al_min": 0.0, "i_al_max": TOR_MEAN_AL, "i_si_min": 0.0, "i_si_max": TOR_MEAN_SI},
-            {"value": "ba", "i_fe_min": mid_low_fe_min, "i_fe_max": low_fe_max, "i_al_min": 0.0, "i_al_max": TOR_MEAN_AL, "i_si_min": TOR_MEAN_SI, "i_si_max": swing_max_si},
-            {"value": "bs", "i_fe_min": mid_low_fe_min, "i_fe_max": low_fe_max, "i_al_min": TOR_MEAN_AL, "i_al_max": swing_max_al, "i_si_min": 0.0, "i_si_max": TOR_MEAN_SI},
-            {"value": "lg", "i_fe_min": mid_low_fe_min, "i_fe_max": low_fe_max, "i_al_min": TOR_MEAN_AL, "i_al_max": swing_max_al, "i_si_min": TOR_MEAN_SI, "i_si_max": swing_max_si},
+            {"value": "so2", "i_fe_min": mid_low_fe_min, "i_fe_max": low_fe_max, "i_al_min": 0.0, "i_al_max": TOR_MEAN_AL, "i_si_min": 0.0, "i_si_max": TOR_MEAN_SI},
+            {"value": "ba2", "i_fe_min": mid_low_fe_min, "i_fe_max": low_fe_max, "i_al_min": 0.0, "i_al_max": TOR_MEAN_AL, "i_si_min": TOR_MEAN_SI, "i_si_max": swing_max_si},
+            {"value": "bs2", "i_fe_min": mid_low_fe_min, "i_fe_max": low_fe_max, "i_al_min": TOR_MEAN_AL, "i_al_max": swing_max_al, "i_si_min": 0.0, "i_si_max": TOR_MEAN_SI},
+            {"value": "lg1", "i_fe_min": mid_low_fe_min, "i_fe_max": low_fe_max, "i_al_min": TOR_MEAN_AL, "i_al_max": swing_max_al, "i_si_min": TOR_MEAN_SI, "i_si_max": swing_max_si},
         ])
 
 rommat_definition_df = pd.DataFrame(rows)
