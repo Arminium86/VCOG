@@ -345,7 +345,12 @@ summary_df = pd.DataFrame(
             "TOR_Mean_Fe": TOR_MEAN_FE,
             "TOR_Mean_Si": TOR_MEAN_SI,
             "TOR_Mean_Al": TOR_MEAN_AL,
+            "Always_Ore_Max_Si": always_ore_max_si,
+            "Always_Ore_Max_Al": always_ore_max_al,
+            "Swing_Max_Si": swing_max_si,
+            "Swing_Max_Al": swing_max_al,
             "Swing_Quantiles": SWING_QUANTILES,
+            "Period_Weight_Decay": PERIOD_WEIGHT_DECAY,
             "Bin_Step_Size": BIN_STEP_SIZE,
         }
     ]
@@ -502,18 +507,16 @@ rommat_definition_granular_df = rommat_definition_granular_df[
     ["value", "i_fe_min", "i_fe_max", "i_al_min", "i_al_max", "i_si_min", "i_si_max"]
 ].sort_values(by=["i_fe_min", "i_al_min", "i_si_min", "value"], ascending=[False, True, True, True]).reset_index(drop=True)
 
-rommat_definition_granular_floored_df = rommat_definition_granular_df.copy()
-
 output_rommat_definition_granular = handle.create_model("Table", "rommat_definition_granular")
 TableModel.from_pandas(rommat_definition_granular_df).write(output_rommat_definition_granular.model_path)
 output_set.append_model("Output Models", output_rommat_definition_granular)
 
-output_rommat_definition_granular_floored = handle.create_model("Table", "rommat_definition_granular_floored")
-TableModel.from_pandas(rommat_definition_granular_floored_df).write(output_rommat_definition_granular_floored.model_path)
-output_set.append_model("Output Models", output_rommat_definition_granular_floored)
+output_rommat_classification_stats = handle.create_model("Table", "rommat_classification_stats")
+TableModel.from_pandas(summary_df).write(output_rommat_classification_stats.model_path)
+output_set.append_model("Output Models", output_rommat_classification_stats)
 
 output_rommat_definition = handle.create_model("Table", "rommat_definition")
 TableModel.from_pandas(rommat_definition_df).write(output_rommat_definition.model_path)
 output_set.append_model("Output Models", output_rommat_definition)
 
-handle.log_info("Completed Always Ore binning, ROM mat classification, swing quantile assignment, and rommat_definition output.")
+handle.log_info("Completed Always Ore binning, ROM mat classification, swing quantile assignment, and rommat_definition output and classification stats.")
