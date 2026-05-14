@@ -204,7 +204,7 @@ def classify_always_ore_rom(
         if (si <= tor_si) and (al > tor_al):
             return "BS"
         if (si <= tor_si) and (al <= tor_al):
-            return "SW1"
+            return "SW0"
         return "LG"
 
     return None
