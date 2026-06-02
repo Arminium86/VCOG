@@ -306,25 +306,45 @@ df_block.loc[eligible_ao.index, "i_rom_mats_vcog"] = eligible_ao.apply(
     axis=1,
 )
 
-# Swing material quantiles: Always Waste <= i_fe < Always Ore (all periods)
+# Swing material quantiles: Always Waste <= i_fe < Always Ore.
+# Calculate grade thresholds from scheduled swing rows only (FYQ != def),
+# then apply those thresholds to every qualified swing row.
 df_swing = df_block[(df_block["i_rom_mats_vcog"].isna()) & (df_block["fe_bin"] >= always_waste_threshold) & (df_block["fe_bin"] < always_ore_threshold) & (df_block["si_bin"] <= swing_max_si) & (df_block["al_bin"] <= swing_max_al)].copy()
 if len(df_swing) > 0 and SWING_QUANTILES > 0:
-    df_swing = df_swing.sort_values(by=["i_fe", "i_si", "i_al"], ascending=[False, False, False]).copy()
-    total_t = float(df_swing["i_t"].fillna(0).sum())
+    scheduled_swing_mask = df_swing["FYQ"].notna() & (df_swing["FYQ"].astype(str).str.lower() != "def")
+    df_swing_quantile = df_swing[scheduled_swing_mask].sort_values(by=["i_fe", "i_si", "i_al"], ascending=[False, True, True]).copy()
+    total_t = float(df_swing_quantile["i_t"].fillna(0).sum())
 
     if total_t > 0:
         boundaries = [(i + 1) / SWING_QUANTILES * total_t for i in range(SWING_QUANTILES)]
-        cum_t = df_swing["i_t"].fillna(0).cumsum().values
+        cum_t = df_swing_quantile["i_t"].fillna(0).cumsum().values
 
-        labels = []
-        for v in cum_t:
-            q_idx = 0
-            while q_idx < len(boundaries) - 1 and v > boundaries[q_idx]:
-                q_idx += 1
-            labels.append(f"SW{q_idx + 1}")
+        swing_grade_thresholds = []
+        for label_num, boundary in enumerate(boundaries, start=1):
+            threshold_idx = int(np.searchsorted(cum_t, boundary, side="left"))
+            threshold_idx = min(threshold_idx, len(df_swing_quantile) - 1)
+            threshold_row = df_swing_quantile.iloc[threshold_idx]
+            swing_grade_thresholds.append(
+                {
+                    "label": f"SW{label_num}",
+                    "i_fe": threshold_row["i_fe"],
+                    "i_si": threshold_row["i_si"],
+                    "i_al": threshold_row["i_al"],
+                }
+            )
 
-        df_swing["swing_label"] = labels
-        df_block.loc[df_swing.index, "i_rom_mats_vcog"] = df_swing["swing_label"]
+        def classify_swing_row(row: pd.Series) -> str:
+            for threshold in swing_grade_thresholds:
+                passes_threshold = (
+                    row["i_fe"] >= threshold["i_fe"]
+                    and row["i_si"] <= threshold["i_si"]
+                    and row["i_al"] <= threshold["i_al"]
+                )
+                if passes_threshold:
+                    return threshold["label"]
+            return f"SW{SWING_QUANTILES}"
+
+        df_block.loc[df_swing.index, "i_rom_mats_vcog"] = df_swing.apply(classify_swing_row, axis=1)
 
 # Persist outputs
 output_block = handle.create_model("Table", "blockmodel_with_bins_and_rommat")
