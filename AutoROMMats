@@ -306,15 +306,18 @@ df_block.loc[eligible_ao.index, "i_rom_mats_vcog"] = eligible_ao.apply(
     axis=1,
 )
 
-# Swing material quantiles: Always Waste <= i_fe < Always Ore (all periods)
+# Swing material quantiles: Always Waste <= i_fe < Always Ore.
+# Calculate quantile boundaries from scheduled swing rows only (FYQ != def),
+# then apply those derived swing-class boundaries to every qualified swing row.
 df_swing = df_block[(df_block["i_rom_mats_vcog"].isna()) & (df_block["fe_bin"] >= always_waste_threshold) & (df_block["fe_bin"] < always_ore_threshold) & (df_block["si_bin"] <= swing_max_si) & (df_block["al_bin"] <= swing_max_al)].copy()
 if len(df_swing) > 0 and SWING_QUANTILES > 0:
-    df_swing = df_swing.sort_values(by=["i_fe", "i_si", "i_al"], ascending=[False, False, False]).copy()
-    total_t = float(df_swing["i_t"].fillna(0).sum())
+    scheduled_swing_mask = df_swing["FYQ"].notna() & (df_swing["FYQ"].astype(str).str.lower() != "def")
+    df_swing_quantile = df_swing[scheduled_swing_mask].sort_values(by=["i_fe", "i_si", "i_al"], ascending=[False, True, True]).copy()
+    total_t = float(df_swing_quantile["i_t"].fillna(0).sum())
 
     if total_t > 0:
         boundaries = [(i + 1) / SWING_QUANTILES * total_t for i in range(SWING_QUANTILES)]
-        cum_t = df_swing["i_t"].fillna(0).cumsum().values
+        cum_t = df_swing_quantile["i_t"].fillna(0).cumsum().values
 
         labels = []
         for v in cum_t:
@@ -323,8 +326,30 @@ if len(df_swing) > 0 and SWING_QUANTILES > 0:
                 q_idx += 1
             labels.append(f"SW{q_idx + 1}")
 
-        df_swing["swing_label"] = labels
-        df_block.loc[df_swing.index, "i_rom_mats_vcog"] = df_swing["swing_label"]
+        df_swing_quantile["swing_label"] = labels
+        swing_transition_keys = []
+        for label_num in range(2, SWING_QUANTILES + 1):
+            label_rows = df_swing_quantile[df_swing_quantile["swing_label"] == f"SW{label_num}"]
+            if len(label_rows) > 0:
+                first_label_row = label_rows.iloc[0]
+                swing_transition_keys.append((label_num, (first_label_row["i_fe"], first_label_row["i_si"], first_label_row["i_al"])))
+
+        def classify_swing_row(row: pd.Series) -> str:
+            swing_label_num = 1
+            for label_num, transition_key in swing_transition_keys:
+                transition_fe, transition_si, transition_al = transition_key
+                passes_transition = (
+                    row["i_fe"] <= transition_fe
+                    and row["i_si"] >= transition_si
+                    and row["i_al"] >= transition_al
+                )
+                if passes_transition:
+                    swing_label_num = label_num
+                else:
+                    break
+            return f"SW{swing_label_num}"
+
+        df_block.loc[df_swing.index, "i_rom_mats_vcog"] = df_swing.apply(classify_swing_row, axis=1)
 
 # Persist outputs
 output_block = handle.create_model("Table", "blockmodel_with_bins_and_rommat")
