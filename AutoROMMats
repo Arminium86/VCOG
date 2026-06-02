@@ -433,7 +433,7 @@ if pd.notna(low_fe_min) and pd.notna(mid_low_fe_min) and pd.notna(low_fe_max):
     # SO / BA / BS / LG in mid Fe band: mean_fe-std_fe <= fe < mean_fe
     if low_fe_max > mid_low_fe_min:
         rows.extend([
-            {"value": "so2", "i_fe_min": mid_low_fe_min, "i_fe_max": low_fe_max, "i_al_min": 0.0, "i_al_max": TOR_MEAN_AL, "i_si_min": 0.0, "i_si_max": TOR_MEAN_SI},
+            {"value": "so02", "i_fe_min": mid_low_fe_min, "i_fe_max": low_fe_max, "i_al_min": 0.0, "i_al_max": TOR_MEAN_AL, "i_si_min": 0.0, "i_si_max": TOR_MEAN_SI},
             {"value": "ba02", "i_fe_min": mid_low_fe_min, "i_fe_max": low_fe_max, "i_al_min": 0.0, "i_al_max": TOR_MEAN_AL, "i_si_min": TOR_MEAN_SI, "i_si_max": swing_max_si},
             {"value": "bs02", "i_fe_min": mid_low_fe_min, "i_fe_max": low_fe_max, "i_al_min": TOR_MEAN_AL, "i_al_max": swing_max_al, "i_si_min": 0.0, "i_si_max": TOR_MEAN_SI},
             {"value": "lg01", "i_fe_min": mid_low_fe_min, "i_fe_max": low_fe_max, "i_al_min": TOR_MEAN_AL, "i_al_max": swing_max_al, "i_si_min": TOR_MEAN_SI, "i_si_max": swing_max_si},
@@ -501,16 +501,16 @@ rommat_definition_granular_df = rommat_definition_granular_df[
     ["value", "i_fe_min", "i_fe_max", "i_al_min", "i_al_max", "i_si_min", "i_si_max"]
 ].sort_values(by=["i_fe_min", "i_al_min", "i_si_min", "value"], ascending=[False, True, True, True]).reset_index(drop=True)
 
-output_rommat_definition_granular = handle.create_model("Table", "rommat_definition_granular")
-TableModel.from_pandas(rommat_definition_granular_df).write(output_rommat_definition_granular.model_path)
-output_set.append_model("Output Models", output_rommat_definition_granular)
+#output_rommat_definition_granular = handle.create_model("Table", "rommat_definition_granular")
+#TableModel.from_pandas(rommat_definition_granular_df).write(output_rommat_definition_granular.model_path)
+#output_set.append_model("Output Models", output_rommat_definition_granular)
 
-output_rommat_classification_stats = handle.create_model("Table", "rommat_classification_stats")
-TableModel.from_pandas(summary_df).write(output_rommat_classification_stats.model_path)
-output_set.append_model("Output Models", output_rommat_classification_stats)
+#output_rommat_classification_stats = handle.create_model("Table", "rommat_classification_stats")
+#TableModel.from_pandas(summary_df).write(output_rommat_classification_stats.model_path)
+#output_set.append_model("Output Models", output_rommat_classification_stats)
 
-output_rommat_definition = handle.create_model("Table", "rommat_definition")
-TableModel.from_pandas(rommat_definition_df).write(output_rommat_definition.model_path)
-output_set.append_model("Output Models", output_rommat_definition)
+#output_rommat_definition = handle.create_model("Table", "rommat_definition")
+#TableModel.from_pandas(rommat_definition_df).write(output_rommat_definition.model_path)
+#output_set.append_model("Output Models", output_rommat_definition)
 
 handle.log_info("Completed Always Ore binning, ROM mat classification, swing quantile assignment, and rommat_definition output and classification stats.")
