@@ -306,25 +306,88 @@ df_block.loc[eligible_ao.index, "i_rom_mats_vcog"] = eligible_ao.apply(
     axis=1,
 )
 
-# Swing material quantiles: Always Waste <= i_fe < Always Ore (all periods)
+# Swing material quantiles: Always Waste <= i_fe < Always Ore.
+# Derive continuous Fe bands and contaminant ranges from scheduled swing rows only
+# (FYQ != def), then apply those scheduled-derived class definitions globally.
+swing_class_definitions = []
 df_swing = df_block[(df_block["i_rom_mats_vcog"].isna()) & (df_block["fe_bin"] >= always_waste_threshold) & (df_block["fe_bin"] < always_ore_threshold) & (df_block["si_bin"] <= swing_max_si) & (df_block["al_bin"] <= swing_max_al)].copy()
 if len(df_swing) > 0 and SWING_QUANTILES > 0:
-    df_swing = df_swing.sort_values(by=["i_fe", "i_si", "i_al"], ascending=[False, False, False]).copy()
-    total_t = float(df_swing["i_t"].fillna(0).sum())
+    scheduled_swing_mask = df_swing["FYQ"].notna() & (df_swing["FYQ"].astype(str).str.lower() != "def")
+    df_swing_quantile = df_swing[scheduled_swing_mask].sort_values(by=["i_fe", "i_si", "i_al"], ascending=[False, True, True]).copy()
+    total_t = float(df_swing_quantile["i_t"].fillna(0).sum())
 
     if total_t > 0:
         boundaries = [(i + 1) / SWING_QUANTILES * total_t for i in range(SWING_QUANTILES)]
-        cum_t = df_swing["i_t"].fillna(0).cumsum().values
+        cum_t = df_swing_quantile["i_t"].fillna(0).cumsum().values
 
-        labels = []
-        for v in cum_t:
-            q_idx = 0
-            while q_idx < len(boundaries) - 1 and v > boundaries[q_idx]:
-                q_idx += 1
-            labels.append(f"SW{q_idx + 1}")
+        swing_fe_thresholds = []
+        for boundary in boundaries:
+            threshold_idx = int(np.searchsorted(cum_t, boundary, side="left"))
+            threshold_idx = min(threshold_idx, len(df_swing_quantile) - 1)
+            threshold_row = df_swing_quantile.iloc[threshold_idx]
+            swing_fe_thresholds.append(float(threshold_row["i_fe"]))
 
-        df_swing["swing_label"] = labels
-        df_block.loc[df_swing.index, "i_rom_mats_vcog"] = df_swing["swing_label"]
+        previous_fe_max = always_ore_threshold
+        for label_num, fe_threshold in enumerate(swing_fe_thresholds, start=1):
+            if previous_fe_max <= fe_threshold:
+                previous_fe_max = fe_threshold
+                continue
+
+            df_scheduled_band = df_swing_quantile[
+                (df_swing_quantile["i_fe"] >= fe_threshold)
+                & (df_swing_quantile["i_fe"] < previous_fe_max)
+            ]
+            if len(df_scheduled_band) == 0:
+                previous_fe_max = fe_threshold
+                continue
+
+            swing_class_definitions.append(
+                {
+                    "label": f"SW{label_num}",
+                    "i_fe_min": fe_threshold,
+                    "i_fe_max": previous_fe_max,
+                    "i_si_min": float(df_scheduled_band["i_si"].min()),
+                    "i_si_max": float(df_scheduled_band["i_si"].max()),
+                    "i_al_min": float(df_scheduled_band["i_al"].min()),
+                    "i_al_max": float(df_scheduled_band["i_al"].max()),
+                }
+            )
+            previous_fe_max = fe_threshold
+
+        fallback_swing_label = f"SW{SWING_QUANTILES + 1}"
+        if previous_fe_max > always_waste_threshold:
+            df_scheduled_band = df_swing_quantile[
+                (df_swing_quantile["i_fe"] >= always_waste_threshold)
+                & (df_swing_quantile["i_fe"] < previous_fe_max)
+            ]
+            if len(df_scheduled_band) > 0:
+                swing_class_definitions.append(
+                    {
+                        "label": fallback_swing_label,
+                        "i_fe_min": always_waste_threshold,
+                        "i_fe_max": previous_fe_max,
+                        "i_si_min": float(df_scheduled_band["i_si"].min()),
+                        "i_si_max": float(df_scheduled_band["i_si"].max()),
+                        "i_al_min": float(df_scheduled_band["i_al"].min()),
+                        "i_al_max": float(df_scheduled_band["i_al"].max()),
+                    }
+                )
+
+        def classify_swing_row(row: pd.Series) -> str:
+            for swing_class in swing_class_definitions:
+                passes_definition = (
+                    row["i_fe"] >= swing_class["i_fe_min"]
+                    and row["i_fe"] < swing_class["i_fe_max"]
+                    and row["i_si"] >= swing_class["i_si_min"]
+                    and row["i_si"] <= swing_class["i_si_max"]
+                    and row["i_al"] >= swing_class["i_al_min"]
+                    and row["i_al"] <= swing_class["i_al_max"]
+                )
+                if passes_definition:
+                    return swing_class["label"]
+            return fallback_swing_label
+
+        df_block.loc[df_swing.index, "i_rom_mats_vcog"] = df_swing.apply(classify_swing_row, axis=1)
 
 # Persist outputs
 output_block = handle.create_model("Table", "blockmodel_with_bins_and_rommat")
@@ -441,28 +504,12 @@ if pd.notna(low_fe_min) and pd.notna(mid_low_fe_min) and pd.notna(low_fe_max):
 
 rommat_definition_df = pd.DataFrame(rows)
 
-# Swing definitions are derived from classified cells (quantiles come from data, not explicit rule planes)
-swing_cells_df = (
-    df_block[df_block["i_rom_mats_vcog"].notna()]
-    .assign(value=lambda d: d["i_rom_mats_vcog"].astype(str).str.lower())
-)
-swing_cells_df = swing_cells_df[swing_cells_df["value"].str.match(r"^sw\d+$", na=False)]
-
-if len(swing_cells_df) > 0:
-    swing_grouped_df = (
-        swing_cells_df.groupby(["value"], as_index=False)
-        .agg(
-            n_blocks=("i_t", "size"),
-            tonnes=("i_t", "sum"),
-            i_fe_min=("i_fe", "min"),
-            i_fe_max=("i_fe", "max"),
-            i_al_min=("i_al", "min"),
-            i_al_max=("i_al", "max"),
-            i_si_min=("i_si", "min"),
-            i_si_max=("i_si", "max"),
-        )
-    )
-    swing_ranges_df = swing_grouped_df[["value", "i_fe_min", "i_fe_max", "i_al_min", "i_al_max", "i_si_min", "i_si_max"]]
+# Swing definitions come from the scheduled-row Fe bands and contaminant ranges
+# used by the classifier rather than from the classified full block model.
+if len(swing_class_definitions) > 0:
+    swing_ranges_df = pd.DataFrame(swing_class_definitions).rename(columns={"label": "value"})
+    swing_ranges_df["value"] = swing_ranges_df["value"].astype(str).str.lower()
+    swing_ranges_df = swing_ranges_df[["value", "i_fe_min", "i_fe_max", "i_al_min", "i_al_max", "i_si_min", "i_si_max"]]
     rommat_definition_df = pd.concat([rommat_definition_df, swing_ranges_df], ignore_index=True)
 
 if len(rommat_definition_df) > 0:
