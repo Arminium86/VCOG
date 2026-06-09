@@ -62,11 +62,6 @@ def make_bin_floor(series: pd.Series, step: float) -> pd.Series:
     return np.floor(x / step) * step
 
 
-def make_bin_ceil(series: pd.Series, step: float) -> pd.Series:
-    x = pd.to_numeric(series, errors="coerce")
-    return np.ceil(x / step) * step
-
-
 
 
 def compress_rommats_ranges(df_cells: pd.DataFrame, step: float) -> pd.DataFrame:
@@ -547,19 +542,9 @@ if len(rommat_definition_df) > 0:
     rommat_definition_df["i_si_min"] = pd.to_numeric(rommat_definition_df["i_si_min"], errors="coerce").clip(lower=0)
     rommat_definition_df["i_si_max"] = pd.to_numeric(rommat_definition_df["i_si_max"], errors="coerce").clip(lower=0)
 
-    # Expand output ranges to bin boundaries so single-bin classes, including the
-    # fallback swing class, are retained in rommat_definition.
-    for c in ["i_fe_min", "i_al_min", "i_si_min"]:
+    # Floor all range bounds to bin step size for rommat_definition output
+    for c in ["i_fe_min", "i_fe_max", "i_al_min", "i_al_max", "i_si_min", "i_si_max"]:
         rommat_definition_df[c] = make_bin_floor(rommat_definition_df[c], BIN_STEP_SIZE)
-    for c in ["i_fe_max", "i_al_max", "i_si_max"]:
-        rommat_definition_df[c] = make_bin_ceil(rommat_definition_df[c], BIN_STEP_SIZE)
-
-    for min_col, max_col in [("i_fe_min", "i_fe_max"), ("i_al_min", "i_al_max"), ("i_si_min", "i_si_max")]:
-        rommat_definition_df.loc[
-            rommat_definition_df[max_col] <= rommat_definition_df[min_col],
-            max_col,
-        ] = rommat_definition_df[min_col] + BIN_STEP_SIZE
-    rommat_definition_df["i_fe_max"] = rommat_definition_df["i_fe_max"].clip(upper=100)
 
     rommat_definition_df = rommat_definition_df[
         (rommat_definition_df["i_fe_max"] > rommat_definition_df["i_fe_min"])
